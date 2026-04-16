@@ -4,44 +4,40 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-/**
- * CORS middleware
- */
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET");
   next();
 });
 
-/**
- * Retry fetch
- */
-async function fetchWithRetry(url, options, retries = 2) {
+async function fetchShopee(url) {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
     const res = await fetch(url, {
-      ...options,
-      signal: controller.signal,
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "accept": "application/json",
+        "accept-language": "vi-VN,vi;q=0.9",
+        "referer": "https://shopee.vn/",
+        "x-api-source": "pc",
+      },
     });
 
-    clearTimeout(timeout);
+    const text = await res.text();
 
-    if (!res.ok) throw new Error("Fetch failed");
+    // debug log
+    console.log("STATUS:", res.status);
 
-    return await res.json();
-  } catch (err) {
-    if (retries > 0) {
-      return fetchWithRetry(url, options, retries - 1);
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
     }
-    throw err;
+  } catch (err) {
+    console.error("Fetch error:", err);
+    return null;
   }
 }
 
-/**
- * Shopee search proxy
- */
 app.get("/search", async (req, res) => {
   try {
     const keyword = req.query.keyword;
@@ -54,43 +50,32 @@ app.get("/search", async (req, res) => {
       keyword
     )}&limit=10`;
 
-    const data = await fetchWithRetry(url, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)",
-        "accept": "application/json",
-        "accept-language": "vi-VN,vi;q=0.9",
-        "referer": "https://shopee.vn/",
-      },
-    });
+    const data = await fetchShopee(url);
 
-    const items =
-      data?.items?.map((item) => ({
-        id: item.item_basic?.itemid,
-        shopid: item.item_basic?.shopid,
-        name: item.item_basic?.name,
-        price: item.item_basic?.price / 100000,
-        image: item.item_basic?.image,
-        sold: item.item_basic?.historical_sold || 0,
-      })) || [];
+    if (!data || !data.items) {
+      return res.json([]);
+    }
 
-    return res.json(items);
+    const items = data.items.map((item) => ({
+      id: item.item_basic?.itemid,
+      shopid: item.item_basic?.shopid,
+      name: item.item_basic?.name,
+      price: item.item_basic?.price / 100000,
+      image: item.item_basic?.image,
+      sold: item.item_basic?.historical_sold || 0,
+    }));
+
+    res.json(items);
   } catch (err) {
     console.error("Proxy error:", err);
-    return res.status(500).json({ error: "Proxy failed" });
+    res.json([]);
   }
 });
 
-/**
- * Health check
- */
 app.get("/", (req, res) => {
   res.send("Shopee Proxy Running 🚀");
 });
 
-/**
- * Start server
- */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
